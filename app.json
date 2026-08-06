@@ -7,9 +7,14 @@
     "icon": "./assets/images/icon.png",
     "scheme": "arin",
     "userInterfaceStyle": "automatic",
+
     "ios": {
-      "icon": "./assets/expo.icon"
+      "icon": "./assets/expo.icon",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "ARIN AI ko voice input ke liye microphone access chahiye."
+      }
     },
+
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
@@ -18,12 +23,17 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.ariai.arin"
+      "package": "com.ariai.arin",
+      "permissions": [
+        "RECORD_AUDIO"
+      ]
     },
+
     "web": {
       "output": "static",
       "favicon": "./assets/images/favicon.png"
     },
+
     "plugins": [
       "expo-router",
       [
@@ -34,12 +44,15 @@
           "imageWidth": 76
         }
       ],
-      "expo-build-properties"
+      "expo-build-properties",
+      "expo-av"
     ],
+
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
     },
+
     "extra": {
       "router": {},
       "eas": {
