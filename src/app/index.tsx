@@ -27,6 +27,10 @@ import { CameraView, useCameraPermissions, CameraType } from "expo-camera";
 import * as ImagePicker from "expo-image-picker";
 import * as FileSystem from "expo-file-system";
 
+// 👁️ ARIN Eye & Vision Service Imports
+import { ArinFloatingEye } from "../components/ArinFloatingEye";
+import { ScreenVisionService } from "../services/screenVision";
+
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
 interface Message {
@@ -47,7 +51,7 @@ export default function HomeScreen() {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "1",
-      text: "नमस्ते! मैं ARIN हूँ। मैं पाठ (Text), आवाज़ (Voice) और तस्वीरों (Images/Screenshots) का विश्लेषण कर सकता हूँ। मैं आपकी क्या सहायता करूँ?",
+      text: "नमस्ते! मैं ARIN हूँ। मेरी आँखें (Screen Vision) अब सक्रिय हैं। आप स्क्रीन पर रहते हुए भी मुझसे सवाल पूछ सकते हैं!",
       sender: "arin",
       timestamp: new Date().toLocaleTimeString([], {
         hour: "2-digit",
@@ -56,12 +60,14 @@ export default function HomeScreen() {
     },
   ]);
   const [inputText, setInputText] = useState("");
-  const [selectedImage, setSelectedImage] = useState<SelectedImage | null>(
-    null
-  );
+  const [selectedImage, setSelectedImage] = useState<SelectedImage | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  
+  // 👁️ Live Screen Vision State & Ref
+  const [isAnalyzingScreen, setIsAnalyzingScreen] = useState(false);
+  const mainScreenRef = useRef<View>(null);
 
   // Camera Modal States
   const [isCameraVisible, setIsCameraVisible] = useState(false);
@@ -78,7 +84,7 @@ export default function HomeScreen() {
   const speakWaveAnim = useRef(new Animated.Value(1)).current;
   const visionPulseAnim = useRef(new Animated.Value(0.8)).current;
 
-  // Listening Animation (Pulsing Mic)
+  // Listening Animation
   useEffect(() => {
     let animation: Animated.CompositeAnimation | null = null;
     if (isListening) {
@@ -105,7 +111,7 @@ export default function HomeScreen() {
     };
   }, [isListening, pulseAnim]);
 
-  // Speaking Animation (Wave Pulse)
+  // Speaking Animation
   useEffect(() => {
     let animation: Animated.CompositeAnimation | null = null;
     if (isSpeaking) {
@@ -132,10 +138,10 @@ export default function HomeScreen() {
     };
   }, [isSpeaking, speakWaveAnim]);
 
-  // Loading / Vision Analysis Pulse Animation
+  // Loading Animation
   useEffect(() => {
     let animation: Animated.CompositeAnimation | null = null;
-    if (isLoading) {
+    if (isLoading || isAnalyzingScreen) {
       animation = Animated.loop(
         Animated.sequence([
           Animated.timing(visionPulseAnim, {
@@ -157,18 +163,13 @@ export default function HomeScreen() {
     return () => {
       if (animation) animation.stop();
     };
-  }, [isLoading, visionPulseAnim]);
+  }, [isLoading, isAnalyzingScreen, visionPulseAnim]);
 
-  // Language Detection (Hindi / English)
   const detectLanguage = (text: string): string => {
     const devanagariRegex = /[\u0900-\u097F]/;
-    if (devanagariRegex.test(text)) {
-      return "hi-IN";
-    }
-    return "en-US";
+    return devanagariRegex.test(text) ? "hi-IN" : "en-US";
   };
 
-  // Speech Recognition Events
   useSpeechRecognitionEvent("result", (event) => {
     const transcript = event.results[0]?.transcript || "";
     if (transcript) {
@@ -191,7 +192,6 @@ export default function HomeScreen() {
     setIsListening(false);
   });
 
-  // Speak response aloud with auto language detection
   const speakReply = (text: string) => {
     Speech.stop();
     setIsSpeaking(true);
@@ -208,7 +208,6 @@ export default function HomeScreen() {
     });
   };
 
-  // Toggle voice recognition
   const handleMicPress = async () => {
     if (isSpeaking) {
       Speech.stop();
@@ -226,13 +225,9 @@ export default function HomeScreen() {
       return;
     }
 
-    const permission =
-      await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+    const permission = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
     if (!permission.granted) {
-      Alert.alert(
-        "अनुमति आवश्यक है",
-        "आवाज़ दर्ज करने के लिए माइक्रोफ़ोन अनुमति की आवश्यकता है।"
-      );
+      Alert.alert("अनुमति आवश्यक है", "माइक्रोफ़ोन अनुमति की आवश्यकता है।");
       return;
     }
 
@@ -252,12 +247,65 @@ export default function HomeScreen() {
     }
   };
 
-  // Gallery Picker (Optimized payload size)
+  // 👁️ ARIN Eye Vision Trigger Handler
+  const handleEyeVisionPress = async () => {
+    if (isAnalyzingScreen || isLoading) return;
+
+    if (isSpeaking) {
+      Speech.stop();
+      setIsSpeaking(false);
+    }
+
+    setIsAnalyzingScreen(true);
+    const promptText = inputText.trim() || "Gaurav sir ki screen par kya chal raha hai? Detail me batao.";
+
+    try {
+      // 1. Capture screen view frame
+      const capturedBase64 = await ScreenVisionService.captureScreen(mainScreenRef);
+
+      if (!capturedBase64) {
+        Alert.alert("Vision Error", "स्क्रीन कैप्चर करने में विफलता हुई।");
+        setIsAnalyzingScreen(false);
+        return;
+      }
+
+      // Add request to UI
+      const userMsg: Message = {
+        id: Date.now().toString(),
+        text: `👁️ [ARIN Eye Live Screen Analysis]: ${promptText}`,
+        sender: "user",
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      };
+      setMessages((prev) => [...prev, userMsg]);
+      setInputText("");
+
+      // 2. Process frame with Gemini Vision
+      const result = await ScreenVisionService.analyzeScreenWithVoicePrompt(
+        capturedBase64,
+        promptText
+      );
+
+      const arinMsg: Message = {
+        id: (Date.now() + 1).toString(),
+        text: result.reply,
+        sender: "arin",
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      };
+
+      setMessages((prev) => [...prev, arinMsg]);
+      speakReply(result.reply);
+    } catch (error) {
+      console.error("ARIN Eye Vision processing error:", error);
+    } finally {
+      setIsAnalyzingScreen(false);
+    }
+  };
+
   const handlePickImage = async () => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ["images"],
-        quality: 0.4, // Reduced to 0.4 to prevent payload bloat
+        quality: 0.4,
         base64: true,
         allowsEditing: false,
       });
@@ -283,27 +331,22 @@ export default function HomeScreen() {
     }
   };
 
-  // Open Camera
   const handleOpenCamera = async () => {
     if (!cameraPermission?.granted) {
       const res = await requestCameraPermission();
       if (!res.granted) {
-        Alert.alert(
-          "Permission Required",
-          "तस्वीर खींचने के लिए कैमरा अनुमति की आवश्यकता है।"
-        );
+        Alert.alert("Permission Required", "कैमरा अनुमति की आवश्यकता है।");
         return;
       }
     }
     setIsCameraVisible(true);
   };
 
-  // Capture Photo (Optimized quality)
   const handleTakePhoto = async () => {
     if (cameraRef.current) {
       try {
         const photo = await cameraRef.current.takePictureAsync({
-          quality: 0.4, // Optimized quality for fast AI processing
+          quality: 0.4,
           base64: true,
         });
 
@@ -321,12 +364,10 @@ export default function HomeScreen() {
     }
   };
 
-  // Clear Selected Image
   const handleRemoveImage = () => {
     setSelectedImage(null);
   };
 
-  // Send Message (Safe JSON Handling to Prevent HTML Crash)
   const handleSendMessage = async (customText?: string) => {
     const textToSend = (customText || inputText).trim();
     const currentImage = selectedImage;
@@ -339,19 +380,14 @@ export default function HomeScreen() {
       setIsSpeaking(false);
     }
 
-    const defaultPromptText = currentImage
-      ? "कृपया इस तस्वीर का विस्तार से विश्लेषण करें।"
-      : "";
+    const defaultPromptText = currentImage ? "कृपया इस तस्वीर का विस्तार से विश्लेषण करें।" : "";
     const finalPromptText = textToSend || defaultPromptText;
 
     const userMessage: Message = {
       id: Date.now().toString(),
       text: finalPromptText,
       sender: "user",
-      timestamp: new Date().toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      }),
+      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       imageUri: currentImage?.uri,
     };
 
@@ -361,27 +397,8 @@ export default function HomeScreen() {
     setIsLoading(true);
 
     try {
-      const visionPromptContext = `
-[ARIN AI System Context]
-User Query: ${finalPromptText}
-Instructions:
-- Analyze the user request and image if provided.
-- If image has text: read and transcribe/explain all text.
-- If screenshot (Mobile UI, AutoDraft, ibisPaint, CapCut, App UI, Code editor): explain buttons, tools, editing timelines, layout, or bugs.
-- If document: summarize key details clearly.
-- If medicine: identify medicine name and provide safe general context.
-- If food/plant/animal: identify accurately.
-- Automatically respond in natural Hindi or English matching the user language.
-- Keep the response clear, structured, and easy to speak aloud.
-`;
-
-      const payload: {
-        message: string;
-        imageBase64?: string;
-        mimeType?: string;
-        image?: string;
-      } = {
-        message: visionPromptContext,
+      const payload: { message: string; imageBase64?: string; mimeType?: string; image?: string } = {
+        message: finalPromptText,
       };
 
       if (currentImage?.base64) {
@@ -392,55 +409,37 @@ Instructions:
 
       const response = await fetch("https://arin-m7wy.onrender.com/chat", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
 
-      // 🔴 Safe Response Reading (Handles HTML Error Pages gracefully)
       const rawText = await response.text();
       let data: any = {};
 
       try {
         data = JSON.parse(rawText);
       } catch (parseError) {
-        console.error("Server returned Non-JSON HTML Page:", rawText);
-        throw new Error(
-          response.status === 413
-            ? "तस्वीर का साइज़ बहुत बड़ा है।"
-            : "सर्वर से जुड़ने में असमर्थ। कृपया पुनः प्रयास करें।"
-        );
+        throw new Error("सर्वर से जुड़ने में समस्या आई।");
       }
 
-      const replyText =
-        data?.reply || data?.response || "क्षमा करें, कोई उत्तर प्राप्त नहीं हुआ।";
+      const replyText = data?.reply || data?.response || "उत्तर प्राप्त नहीं हुआ।";
 
       const arinMessage: Message = {
         id: (Date.now() + 1).toString(),
         text: replyText,
         sender: "arin",
-        timestamp: new Date().toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-        }),
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
 
       setMessages((prev) => [...prev, arinMessage]);
       speakReply(replyText);
     } catch (error: any) {
-      console.error("API error:", error);
-      const errorMessageText =
-        error?.message || "सर्वर से जुड़ने में असमर्थ। कृपया नेटवर्क की जांच करें।";
-
+      const errorMessageText = error?.message || "नेटवर्क त्रुटि।";
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         text: errorMessageText,
         sender: "arin",
-        timestamp: new Date().toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-        }),
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
       setMessages((prev) => [...prev, errorMessage]);
     } finally {
@@ -451,12 +450,7 @@ Instructions:
   const renderMessageItem = ({ item }: { item: Message }) => {
     const isUser = item.sender === "user";
     return (
-      <View
-        style={[
-          styles.messageRow,
-          isUser ? styles.userRow : styles.arinRow,
-        ]}
-      >
+      <View style={[styles.messageRow, isUser ? styles.userRow : styles.arinRow]}>
         {!isUser && (
           <Animated.View
             style={[
@@ -467,19 +461,10 @@ Instructions:
             <Ionicons name="eye-outline" size={18} color="#6366F1" />
           </Animated.View>
         )}
-        <View
-          style={[
-            styles.messageBubble,
-            isUser ? styles.userBubble : styles.arinBubble,
-          ]}
-        >
+        <View style={[styles.messageBubble, isUser ? styles.userBubble : styles.arinBubble]}>
           {item.imageUri && (
             <View style={styles.imageBubbleContainer}>
-              <Image
-                source={{ uri: item.imageUri }}
-                style={styles.messageImage}
-                resizeMode="cover"
-              />
+              <Image source={{ uri: item.imageUri }} style={styles.messageImage} resizeMode="cover" />
             </View>
           )}
           {!!item.text && <Text style={styles.messageText}>{item.text}</Text>}
@@ -490,8 +475,19 @@ Instructions:
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView
+      style={styles.container}
+      ref={mainScreenRef}
+      collapsable={false}
+    >
       <StatusBar barStyle="light-content" backgroundColor="#0D0F17" />
+
+      {/* 👁️ Floating ARIN Eye Widget Layer */}
+      <ArinFloatingEye
+        isAnalyzing={isAnalyzingScreen}
+        isSpeaking={isSpeaking}
+        onEyePress={handleEyeVisionPress}
+      />
 
       {/* Header */}
       <View style={styles.header}>
@@ -500,12 +496,12 @@ Instructions:
           <Text style={styles.headerTitle}>ARIN EYES</Text>
         </View>
         <Text style={styles.headerSubtitle}>
-          {isListening
-            ? "सुन रहा हूँ (Hindi/English)..."
+          {isAnalyzingScreen
+            ? "स्क्रीन विश्लेषण जारी है..."
+            : isListening
+            ? "सुन रहा हूँ..."
             : isSpeaking
             ? "बोल रहा हूँ..."
-            : isLoading
-            ? "विज़न और AI विश्लेषण जारी है..."
             : "मल्टीमॉडल AI सहायक (Vision + Voice)"}
         </Text>
       </View>
@@ -521,44 +517,32 @@ Instructions:
           keyExtractor={(item) => item.id}
           renderItem={renderMessageItem}
           contentContainerStyle={styles.chatContent}
-          onContentSizeChange={() =>
-            flatListRef.current?.scrollToEnd({ animated: true })
-          }
+          onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
           onLayout={() => flatListRef.current?.scrollToEnd({ animated: true })}
         />
 
-        {/* Loading Indicator with Vision Pulse */}
-        {isLoading && (
+        {(isLoading || isAnalyzingScreen) && (
           <View style={styles.loadingContainer}>
-            <Animated.View
-              style={{ transform: [{ scale: visionPulseAnim }] }}
-            >
+            <Animated.View style={{ transform: [{ scale: visionPulseAnim }] }}>
               <Ionicons name="scan-circle" size={28} color="#6366F1" />
             </Animated.View>
             <ActivityIndicator size="small" color="#6366F1" />
             <Text style={styles.loadingText}>
-              ARIN तस्वीर और संदेश का विश्लेषण कर रहा है...
+              {isAnalyzingScreen
+                ? "ARIN लाइव स्क्रीन की जाँच कर रहा है..."
+                : "ARIN उत्तर तैयार कर रहा है..."}
             </Text>
           </View>
         )}
 
-        {/* Floating Actions: Gallery | Mic | Camera */}
+        {/* Floating Actions */}
         <View style={styles.floatingActionRow}>
-          {/* Gallery Button */}
-          <TouchableOpacity
-            style={styles.sideActionButton}
-            onPress={handlePickImage}
-            activeOpacity={0.7}
-          >
+          <TouchableOpacity style={styles.sideActionButton} onPress={handlePickImage} activeOpacity={0.7}>
             <Ionicons name="images-outline" size={22} color="#F8FAFC" />
           </TouchableOpacity>
 
-          {/* Central Microphone */}
           <Animated.View
-            style={[
-              styles.micPulseRing,
-              isListening && { transform: [{ scale: pulseAnim }] },
-            ]}
+            style={[styles.micPulseRing, isListening && { transform: [{ scale: pulseAnim }] }]}
           >
             <TouchableOpacity
               style={[
@@ -570,25 +554,14 @@ Instructions:
               activeOpacity={0.8}
             >
               <Ionicons
-                name={
-                  isSpeaking
-                    ? "volume-high"
-                    : isListening
-                    ? "mic"
-                    : "mic-outline"
-                }
+                name={isSpeaking ? "volume-high" : isListening ? "mic" : "mic-outline"}
                 size={28}
                 color="#FFFFFF"
               />
             </TouchableOpacity>
           </Animated.View>
 
-          {/* Camera Button */}
-          <TouchableOpacity
-            style={styles.sideActionButton}
-            onPress={handleOpenCamera}
-            activeOpacity={0.7}
-          >
+          <TouchableOpacity style={styles.sideActionButton} onPress={handleOpenCamera} activeOpacity={0.7}>
             <Ionicons name="camera-outline" size={22} color="#F8FAFC" />
           </TouchableOpacity>
         </View>
@@ -596,20 +569,12 @@ Instructions:
         {/* Selected Image Preview Staging Bar */}
         {selectedImage && (
           <View style={styles.imagePreviewStagingBar}>
-            <Image
-              source={{ uri: selectedImage.uri }}
-              style={styles.previewThumbnail}
-            />
+            <Image source={{ uri: selectedImage.uri }} style={styles.previewThumbnail} />
             <View style={styles.previewInfo}>
               <Text style={styles.previewTitle}>तस्वीर चुनी गई</Text>
-              <Text style={styles.previewSubtitle}>
-                Gemini Vision विश्लेषण के लिए तैयार
-              </Text>
+              <Text style={styles.previewSubtitle}>Gemini Vision के लिए तैयार</Text>
             </View>
-            <TouchableOpacity
-              style={styles.removeImageButton}
-              onPress={handleRemoveImage}
-            >
+            <TouchableOpacity style={styles.removeImageButton} onPress={handleRemoveImage}>
               <Ionicons name="close-circle" size={24} color="#EF4444" />
             </TouchableOpacity>
           </View>
@@ -619,7 +584,7 @@ Instructions:
         <View style={styles.inputContainer}>
           <TextInput
             style={styles.textInput}
-            placeholder="संदेश लिखें या तस्वीर जोड़ें..."
+            placeholder="संदेश लिखें या Floating Eye दबाएँ..."
             placeholderTextColor="#64748B"
             value={inputText}
             onChangeText={setInputText}
@@ -630,45 +595,29 @@ Instructions:
           <TouchableOpacity
             style={[
               styles.sendButton,
-              (!inputText.trim() && !selectedImage) || isLoading
+              (!inputText.trim() && !selectedImage) || isLoading || isAnalyzingScreen
                 ? styles.sendButtonDisabled
                 : null,
             ]}
             onPress={() => handleSendMessage()}
-            disabled={(!inputText.trim() && !selectedImage) || isLoading}
+            disabled={(!inputText.trim() && !selectedImage) || isLoading || isAnalyzingScreen}
           >
             <Ionicons name="send" size={18} color="#FFFFFF" />
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
 
-      {/* In-App Camera Modal */}
-      <Modal
-        visible={isCameraVisible}
-        animationType="slide"
-        onRequestClose={() => setIsCameraVisible(false)}
-      >
+      {/* Camera Modal */}
+      <Modal visible={isCameraVisible} animationType="slide" onRequestClose={() => setIsCameraVisible(false)}>
         <SafeAreaView style={styles.cameraModalContainer}>
-          <CameraView
-            ref={cameraRef}
-            style={StyleSheet.absoluteFillObject}
-            facing={facing}
-            flash={flash}
-          >
-            {/* Top Controls Overlay */}
+          <CameraView ref={cameraRef} style={StyleSheet.absoluteFillObject} facing={facing} flash={flash}>
             <View style={styles.cameraTopBar}>
-              <TouchableOpacity
-                style={styles.cameraIconButton}
-                onPress={() => setIsCameraVisible(false)}
-              >
+              <TouchableOpacity style={styles.cameraIconButton} onPress={() => setIsCameraVisible(false)}>
                 <Ionicons name="close" size={28} color="#FFFFFF" />
               </TouchableOpacity>
-
               <TouchableOpacity
                 style={styles.cameraIconButton}
-                onPress={() =>
-                  setFlash((prev) => (prev === "off" ? "on" : "off"))
-                }
+                onPress={() => setFlash((prev) => (prev === "off" ? "on" : "off"))}
               >
                 <Ionicons
                   name={flash === "on" ? "flash" : "flash-off"}
@@ -678,23 +627,15 @@ Instructions:
               </TouchableOpacity>
             </View>
 
-            {/* Bottom Shutter Controls Overlay */}
             <View style={styles.cameraBottomBar}>
               <TouchableOpacity
                 style={styles.cameraIconButton}
-                onPress={() =>
-                  setFacing((prev) => (prev === "back" ? "front" : "back"))
-                }
+                onPress={() => setFacing((prev) => (prev === "back" ? "front" : "back"))}
               >
                 <Ionicons name="camera-reverse" size={28} color="#FFFFFF" />
               </TouchableOpacity>
 
-              {/* Shutter Button */}
-              <TouchableOpacity
-                style={styles.shutterButtonOuter}
-                onPress={handleTakePhoto}
-                activeOpacity={0.8}
-              >
+              <TouchableOpacity style={styles.shutterButtonOuter} onPress={handleTakePhoto} activeOpacity={0.8}>
                 <View style={styles.shutterButtonInner} />
               </TouchableOpacity>
 
