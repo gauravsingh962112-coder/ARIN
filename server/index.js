@@ -7,8 +7,10 @@ const { GoogleGenAI } = require("@google/genai");
 const app = express();
 
 app.use(cors());
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ limit: "50mb", extended: true }));
+
+// ⚡ 10MB limit (Render RAM crash hone se bachane ke liye)
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ limit: "10mb", extended: true }));
 
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY,
@@ -24,7 +26,7 @@ app.post("/chat", async (req, res) => {
 
     if (!process.env.GEMINI_API_KEY) {
       return res.status(400).json({
-        reply: "Gaurav sir, Render Environment Variables me GEMINI_API_KEY miss hai!",
+        reply: "Gaurav sir, Render Environment me GEMINI_API_KEY missing hai!",
       });
     }
 
@@ -40,18 +42,26 @@ app.post("/chat", async (req, res) => {
       });
     }
 
-    const response = await ai.models.generateContent({
+    // ⏱️ 15 Second Strict Timeout Wrapper
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("Gemini AI timeout (15s exceeded)")), 15000)
+    );
+
+    const geminiPromise = ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: parts,
     });
+
+    // Race between Gemini response and Timeout
+    const response = await Promise.race([geminiPromise, timeoutPromise]);
 
     res.json({
       reply: response.text,
     });
   } catch (err) {
-    console.error("Gemini API Error:", err);
+    console.error("Gemini API Error:", err.message || err);
     res.status(500).json({
-      reply: `Gaurav sir, AI Error: ${err.message || "Processing failed"}`,
+      reply: `Gaurav sir, AI processing error: ${err.message || "Timeout"}`,
     });
   }
 });
