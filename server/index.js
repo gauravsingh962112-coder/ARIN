@@ -7,8 +7,6 @@ const { GoogleGenAI } = require("@google/genai");
 const app = express();
 
 app.use(cors());
-
-// ⚡ Payload Size Limit Increase (Fixes PayloadTooLargeError)
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
@@ -24,14 +22,17 @@ app.post("/chat", async (req, res) => {
   try {
     const { message, imageBase64, mimeType } = req.body;
 
-    // 👁️ Prompt + Image Content Preparation
-    const contents = [message || "Is screen ko analyze karke batao."];
+    if (!process.env.GEMINI_API_KEY) {
+      return res.status(400).json({
+        reply: "Gaurav sir, Render Environment Variables me GEMINI_API_KEY miss hai!",
+      });
+    }
+
+    const parts = [message || "Is screen ko analyze karke batao."];
 
     if (imageBase64) {
-      // Clean base64 string if data URL prefix exists
       const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, "");
-
-      contents.push({
+      parts.push({
         inlineData: {
           data: cleanBase64,
           mimeType: mimeType || "image/jpeg",
@@ -41,7 +42,7 @@ app.post("/chat", async (req, res) => {
 
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
-      contents: contents,
+      contents: parts,
     });
 
     res.json({
@@ -50,7 +51,7 @@ app.post("/chat", async (req, res) => {
   } catch (err) {
     console.error("Gemini API Error:", err);
     res.status(500).json({
-      reply: "Gaurav sir, backend me AI processing ke waqt error aaya.",
+      reply: `Gaurav sir, AI Error: ${err.message || "Processing failed"}`,
     });
   }
 });
